@@ -72,17 +72,21 @@ def create_dataloader(
 	dataset: NuScenesTrajectoryDataset,
 	batch_size: int = 16,
 	shuffle: bool = True,
-	num_workers: int = 0,
+	num_workers: int = 4,
 	pin_memory: bool = True,
 	drop_last: bool = False,
-	persistent_workers: bool = False,
+	persistent_workers: bool = True,
 	seed: int = 42,
 ) -> DataLoader:
 	generator = torch.Generator()
 	generator.manual_seed(seed)
 
-	if num_workers == 0:
-		persistent_workers = False
+	if num_workers > 0:
+		p_factor = 2              # Pre-load 2 batches per worker
+		p_workers = persistent_workers
+	else:
+		p_factor = None           # Must be None if num_workers is 0
+		p_workers = False         # Cannot be True if num_workers is 0
 
 	return DataLoader(
 		dataset,
@@ -92,6 +96,7 @@ def create_dataloader(
 		pin_memory=pin_memory,
 		drop_last=drop_last,
 		persistent_workers=persistent_workers,
+		prefetch_factor=p_factor,
 		collate_fn=_collate_batch,
 		worker_init_fn=_seed_worker,
 		generator=generator,
