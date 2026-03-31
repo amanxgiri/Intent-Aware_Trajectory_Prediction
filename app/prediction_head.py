@@ -6,7 +6,7 @@ class PredictionHead(nn.Module):
     def __init__(
         self,
         in_features: int,
-        num_modes: int = 6,
+        num_modes: int = 3,
         future_steps: int = 6,
         out_dim: int = 2,
         hidden_dim: int = 256,

@@ -12,6 +12,73 @@ MODEL_STATE = {}
 CHECKPOINT_PATH = "checkpoints/best_model.pt"
 
 
+def _validate_inference_shapes(
+    agent_tensor: torch.Tensor,
+    neighbors_tensor: torch.Tensor,
+    map_tensor: torch.Tensor,
+) -> None:
+    """Validate request tensor shapes against model contract before forward pass."""
+    if agent_tensor.dim() != 3:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid agent shape {tuple(agent_tensor.shape)}. Expected [B, T_past, 4].",
+        )
+
+    if agent_tensor.size(-1) != 4:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid agent feature dimension {agent_tensor.size(-1)}. "
+                "Expected last dimension = 4 (x, y, vx, vy)."
+            ),
+        )
+
+    if neighbors_tensor.dim() not in (3, 4):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid neighbors shape {tuple(neighbors_tensor.shape)}. "
+                "Expected [B, N, 4] or [B, N, T_past, 4]."
+            ),
+        )
+
+    if neighbors_tensor.size(-1) != 4:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid neighbors feature dimension {neighbors_tensor.size(-1)}. "
+                "Expected last dimension = 4 (x, y, vx, vy)."
+            ),
+        )
+
+    if map_tensor.dim() != 4:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid map_img shape {tuple(map_tensor.shape)}. Expected [B, 3, H, W].",
+        )
+
+    if map_tensor.size(1) != 3:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid map_img channel dimension {map_tensor.size(1)}. "
+                "Expected 3 channels (RGB-like raster)."
+            ),
+        )
+
+    b_agent = agent_tensor.size(0)
+    b_neighbors = neighbors_tensor.size(0)
+    b_map = map_tensor.size(0)
+    if b_agent != b_neighbors or b_agent != b_map:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Batch size mismatch across inputs: "
+                f"agent={b_agent}, neighbors={b_neighbors}, map_img={b_map}."
+            ),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -21,7 +88,7 @@ async def lifespan(app: FastAPI):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading inference API on device: {device}")
 
-    model = IntentAwareTrajectoryModel(embed_dim=128, num_modes=6, future_steps=6)
+    model = IntentAwareTrajectoryModel(embed_dim=128, num_modes=3, future_steps=6)
 
     checkpoint_loaded = False
     if os.path.exists(CHECKPOINT_PATH):
@@ -91,6 +158,8 @@ def predict_trajectory(request: InferenceRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid tensor data formats: {e}")
 
+    _validate_inference_shapes(agent_tensor, neighbors_tensor, map_tensor)
+
     # Forward pass safely without gradient tracking
     with torch.no_grad():
         try:
@@ -108,6 +177,9 @@ def predict_trajectory(request: InferenceRequest):
             raise HTTPException(
                 status_code=422, detail=f"Model shape validation failed: {ve}"
             )
+        except RuntimeError as re:
+            # Shape/runtime issues from deep PyTorch ops should map to client errors
+            raise HTTPException(status_code=422, detail=f"Invalid input shape for model: {re}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
 

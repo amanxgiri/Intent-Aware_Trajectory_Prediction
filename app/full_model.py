@@ -8,7 +8,7 @@ from app.prediction_head import PredictionHead
 
 
 class IntentAwareTrajectoryModel(nn.Module):
-    def __init__(self, embed_dim: int = 128, num_modes: int = 6, future_steps: int = 6):
+    def __init__(self, embed_dim: int = 128, num_modes: int = 3, future_steps: int = 6):
         """
         Integrates Temporal, Scene, and Social encoders into a single prediction pipeline.
 
