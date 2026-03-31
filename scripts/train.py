@@ -190,7 +190,12 @@ def main():
     parser.add_argument("--num_modes", type=int, default=6)
     parser.add_argument("--future_steps", type=int, default=6)
 
-    parser.add_argument("--plot_dir", type=str, default="checkpoints", help="Directory to save training plots")
+    parser.add_argument(
+        "--plot_dir",
+        type=str,
+        default="checkpoints",
+        help="Directory to save training plots",
+    )
     args = parser.parse_args()
 
     device = get_device()
@@ -253,7 +258,9 @@ def main():
         fig, axes = setup_live_plot()
 
         for epoch in range(1, args.epochs + 1):
-            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            train_loss = train_one_epoch(
+                model, train_loader, criterion, optimizer, device
+            )
             val = evaluate(model, val_loader, criterion, device)
 
             scheduler.step(val["val_loss"])
@@ -293,7 +300,10 @@ def main():
                 print("Early stopping triggered")
                 break
 
-        plot_path = os.path.join(args.plot_dir, f"training_plot_{config_name.replace('=', '_').replace('.', 'p')}.png")
+        plot_path = os.path.join(
+            args.plot_dir,
+            f"training_plot_{config_name.replace('=', '_').replace('.', 'p')}.png",
+        )
         save_final_plot(fig, plot_path)
         plt.close(fig)
 
