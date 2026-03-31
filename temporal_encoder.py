@@ -83,7 +83,6 @@ class TemporalEncoder(nn.Module):
 
 
 if __name__ == "__main__":
-    # 🔥 Sanity test
     model = TemporalEncoder()
 
     dummy = torch.randn(2, 4, 4)  # [B=2, T=4, features=4]
