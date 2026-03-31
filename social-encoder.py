@@ -60,8 +60,8 @@ class SocialEncoder(nn.Module):
         
         # Create adjacency matrix: connections exist if agents are within a threshold (e.g., 5 meters)
         # Adds self-loops (identity matrix) to retain individual node features
-        threshold = 5.0
-        adj = (dist < threshold).float()
+        sigma = 10.0
+        adj = torch.exp(-dist**2 / (2 * sigma**2))
         
         # Normalize adjacency matrix
         rowsum = adj.sum(dim=-1, keepdim=True)
