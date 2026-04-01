@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading inference API on device: {device}")
 
-    model = IntentAwareTrajectoryModel(embed_dim=128, num_modes=6, future_steps=6)
+    model = IntentAwareTrajectoryModel(embed_dim=128, num_modes=3, future_steps=6)
 
     checkpoint_loaded = False
     if os.path.exists(CHECKPOINT_PATH):

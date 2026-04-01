@@ -187,7 +187,7 @@ def main():
     parser.add_argument("--num_workers", type=int, default=4)
 
     parser.add_argument("--embed_dim", type=int, default=128)
-    parser.add_argument("--num_modes", type=int, default=6)
+    parser.add_argument("--num_modes", type=int, default=3)
     parser.add_argument("--future_steps", type=int, default=6)
 
     parser.add_argument(
