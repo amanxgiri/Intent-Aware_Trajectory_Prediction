@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+import json
 from pathlib import Path
 
 import torch
@@ -77,6 +78,12 @@ def main():
         type=str,
         default="checkpoints/best_model.pt",
         help="Checkpoint file path",
+    )
+    parser.add_argument(
+        "--output_json",
+        type=str,
+        default=None,
+        help="Optional path to save the evaluation summary as JSON",
     )
     parser.add_argument(
         "--batch_size", type=int, default=16, help="Batch size for evaluation"
@@ -216,17 +223,47 @@ def main():
     print("\n" + "=" * 40)
     print("           Evaluation Results           ")
     print("=" * 40)
-    print(f"Val Loss       : {avg_loss:.4f}")
-    print(f"ADE            : {avg_ade:.4f}")
-    print(f"FDE            : {avg_fde:.4f}")
-    print(f"MinADE@K       : {avg_minade:.4f}")
-    print(f"MinFDE@K       : {avg_minfde:.4f}")
+    print(f"Val Loss       : {float(avg_loss):.4f}")
+    print(f"ADE            : {float(avg_ade):.4f}")
+    print(f"FDE            : {float(avg_fde):.4f}")
+    print(f"MinADE@K       : {float(avg_minade):.4f}")
+    print(f"MinFDE@K       : {float(avg_minfde):.4f}")
 
     if avg_collision is not None:
-        print(f"Collision Prob : {avg_collision:.4f}")
+        print(f"Collision Prob : {float(avg_collision):.4f}")
     else:
         print("Collision Prob : N/A (Skipped)")
     print("=" * 40)
+
+    if args.output_json:
+        output_data = {
+            "model_config": {
+                "embed_dim": args.embed_dim,
+                "num_modes": args.num_modes,
+                "future_steps": args.future_steps,
+            },
+            "checkpoint": args.checkpoint,
+            "dataset": {
+                "dataroot": args.dataroot,
+                "version": args.version,
+            },
+            "evaluation": {
+                "val_loss": float(avg_loss),
+                "ade": float(avg_ade),
+                "fde": float(avg_fde),
+                "minade_k": float(avg_minade),
+                "minfde_k": float(avg_minfde),
+                "collision_prob": (
+                    float(avg_collision) if avg_collision is not None else None
+                ),
+            },
+        }
+
+        json_path = Path(args.output_json)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(json_path, "w") as f:
+            json.dump(output_data, f, indent=4)
+        print(f"Evaluations successfully saved to {json_path}")
 
 
 if __name__ == "__main__":

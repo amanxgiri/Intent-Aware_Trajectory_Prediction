@@ -1,0 +1,20 @@
+{
+    "model_config": {
+        "embed_dim": 128,
+        "num_modes": 3,
+        "future_steps": 6
+    },
+    "checkpoint": "checkpoints/best_model.pt",
+    "dataset": {
+        "dataroot": "C:\\Users\\giria\\Documents\\MAHE_MOBILITY\\v1.0-mini",
+        "version": "v1.0-mini"
+    },
+    "evaluation": {
+        "val_loss": 0.12924444975872193,
+        "ade": 0.25250727971715314,
+        "fde": 0.4768673509599701,
+        "minade_k": 0.2449242554364666,
+        "minfde_k": 0.457369290652775,
+        "collision_prob": null
+    }
+}
