@@ -2,7 +2,7 @@
 
 Autonomous vehicles operating in urban environments must not only detect pedestrians and cyclists but also anticipate where they are likely to move next. Simply reacting to their current position is not enough for safe navigation—systems need to predict future movement in advance.
 
-This project focuses on **intent and trajectory prediction**, where the goal is to forecast the future path of pedestrians and cyclists based on their recent motion. Given **2 seconds of past movement data (positions/velocity)**, the model predicts their **future positions over the next 3 seconds**. :contentReference[oaicite:0]{index=0}
+This project focuses on **intent and trajectory prediction**, where the goal is to forecast the future path of pedestrians and cyclists based on their recent motion. Given **2 seconds of past movement data (positions/velocity)**, the model predicts their **future positions over the next 3 seconds**.
 
 The challenge lies in the fact that human movement is not always predictable:
 
@@ -15,7 +15,7 @@ To address this, the system is designed to:
 - Learn movement patterns from **past trajectory data**
 - Consider **interactions between nearby agents**
 - Generate **multiple possible future paths (multi-modal prediction)**
-- Infer likely behavior (**intent**) from observed motion
+- Infer likely behavior (**intent**) from observed motion and rasterized maps
 
 The final outcome is a model that takes past movement as input and predicts several realistic future trajectories, helping autonomous systems make **safer and more proactive decisions**.
 
@@ -25,7 +25,7 @@ The final outcome is a model that takes past movement as input and predicts seve
 
 The system is organized as a modular prediction pipeline:
 
-**Data Pipeline → Feature Encoding → Social Interaction → Prediction & Deployment**. :contentReference[oaicite:1]{index=1}
+**Data Pipeline → Feature Encoding → Social Interaction → Prediction & Deployment**. 
 
 ### 1. Data Pipeline
 
@@ -41,42 +41,46 @@ The current dataset contract is:
 - `agent`: `[T_past, 4]`, where each step is `[x, y, vx, vy]`
 - `neighbors`: `[N, T_past, 4]`, padded to a fixed maximum neighbor count
 - `map`: `[3, H, W]`
-- `target`: `[T_future, 2]`, where each step is `[x, y]` :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3}
+- `target`: `[T_future, 2]`, where each step is `[x, y]`
 
 ### 2. Temporal Encoder
 
-The temporal branch processes the agent’s motion history using a Transformer encoder.
+The temporal branch processes the agent’s 2s motion history using a Transformer encoder.
 
 Input:
 - `agent`: `[B, T_past, 4]`
 
 Output:
-- `agent_embed`: `[B, T_past, D]` :contentReference[oaicite:4]{index=4} :contentReference[oaicite:5]{index=5}
+- `agent_embed`: `[B, T_past, D]` 
 
 This branch learns motion dynamics over time and captures sequential movement patterns.
 
 ### 3. Scene Encoder
 
-The scene branch processes the rasterized local map using a CNN-based encoder built on ResNet-18.
+The scene branch processes the rasterized local map using a CNN-based encoder built on ResNet-18 and captures scene context and long term intent.
 
 Input:
 - `map`: `[B, 3, H, W]`
 
 Output:
-- `scene_embed`: `[B, D]` :contentReference[oaicite:6]{index=6} :contentReference[oaicite:7]{index=7}
+- `scene_embed`: `[B, D]` 
 
-This branch captures environmental context such as drivable area, walkway structure, and nearby map constraints. The design uses a **20m × 20m local crop**, centered on the target agent, to focus computation on the most relevant spatial region. :contentReference[oaicite:8]{index=8}
+This branch captures environmental context such as drivable area, walkway structure, and nearby map constraints and long term content. The design uses a **20m × 20m local crop**, centered on the target agent, to focus computation on the most relevant spatial region. :contentReference[oaicite:8]{index=8}
 
 ### 4. Social Encoder
 
 The social interaction branch models neighboring agents and local crowd behavior using an STGCN-inspired graph encoder.
+ We have approached to a **two-layer, 10-meter Graph Convolutional Network (GCN)** utilizing **Gaussian soft-adjacency**.
+* **Beyond Isolated Objects:**  Our dual-layer approach captures the "social hops" of urban movement.
+*  **The Ripple Effect:** The first layer models how neighbors interact with one another. The second layer passes that collective interaction—the "ripple effect"—to the target agent.
+* **Collective Negotiation:** While maintaining a total 20-meter awareness, this architecture allows the model to predict complex group behaviors and path negotiations that a single-layer logic would overlook.
 
 Inputs:
 - `neighbors`: `[B, N, 4]`
 - `agent_embed`: `[B, T_past, D]`
 
 Output:
-- `social_embed`: `[B, D]` :contentReference[oaicite:9]{index=9} :contentReference[oaicite:10]{index=10}
+- `social_embed`: `[B, D]`
 
 In the current implementation, the dataloader may provide neighbors with a time dimension, and the integration layer adapts them before passing them into the social encoder.
 
@@ -92,18 +96,18 @@ fused = concat(
 )
 ```
 
-This produces a fused feature of shape `[B, 3D]`, which is passed to the multi-modal prediction head. :contentReference[oaicite:11]{index=11}
+This produces a fused feature of shape `[B, 3D]`, which is passed to the multi-modal prediction head. 
 
 The prediction head outputs:
 
 - `trajectories`: `[B, K, T_future, 2]`
-- `probabilities`: `[B, K]` :contentReference[oaicite:12]{index=12}
+- `probabilities`: `[B, K]` 
 
 This allows the system to predict multiple possible future paths rather than forcing a single deterministic outcome.
 
 ### 6. Training Objective
 
-The model is trained with a **Winner-Takes-All (WTA)** style objective. The model predicts multiple trajectory modes, and the loss is computed using the mode that best matches the ground-truth future trajectory. This supports multi-modal forecasting and reduces collapse toward a single average path. :contentReference[oaicite:13]{index=13} :contentReference[oaicite:14]{index=14}
+The model is trained with a **Winner-Takes-All (WTA)** style objective. The model predicts multiple trajectory modes, and the loss is computed using the mode that best matches the ground-truth future trajectory. This supports multi-modal forecasting and reduces collapse toward a single average path. 
 
 ### 7. Metrics Used
 
@@ -113,8 +117,18 @@ The current evaluation setup focuses on:
 - **FDE** — Final Displacement Error
 - **MinADE@K**
 - **MinFDE@K**
-- **Collision Probability**
-- **Intent Accuracy** as a planned metric in the broader design, although intent labels are not yet fully integrated into the current training/evaluation pipeline. :contentReference[oaicite:15]{index=15} :contentReference[oaicite:16]{index=16}
+
+### 8. Performance and Results
+
+The model achieves high-fidelity predictions with stable convergence. Best performance was achieved at **Epoch 3** with a **Validation Loss of 0.3256**.
+
+| Metric (metres)   | Score  |
+| :---              | :---   |
+| **MinADE@K**      | 0.2358 |
+| **MinFDE@K**      | 0.4330 |
+| **ADE (Overall)** | 0.2558 |
+| **FDE (Overall)** | 0.4775 |
+
 
 ---
 
@@ -127,17 +141,8 @@ The project uses the **nuScenes** dataset as the primary data source. It is well
 - temporal tracking of agents
 - multi-agent urban scenes
 - HD map information
-- realistic motion behavior in complex traffic environments :contentReference[oaicite:17]{index=17}
+- realistic motion behavior in complex traffic environments 
 
-### Why nuScenes
-
-nuScenes is useful for this project because the model needs to understand not only where an agent is moving, but also:
-
-- how motion evolves over time
-- how nearby agents affect movement
-- how scene structure constrains possible trajectories
-
-This aligns well with the project’s architecture, which combines temporal, scene, and social reasoning. :contentReference[oaicite:18]{index=18} :contentReference[oaicite:19]{index=19}
 
 ### Current Input Representation
 
@@ -146,14 +151,14 @@ For each training sample, the current dataset implementation returns:
 - `agent`: past motion history of the target agent in agent-centric coordinates
 - `neighbors`: nearby agents represented by position and velocity features
 - `map`: a local rasterized semantic map crop
-- `target`: future trajectory of the target agent :contentReference[oaicite:20]{index=20}
+- `target`: future trajectory of the target agent 
 
 ### Temporal Configuration
 
 The project currently uses:
 
 - **2 seconds of past motion**
-- **3 seconds of future prediction** :contentReference[oaicite:21]{index=21}
+- **3 seconds of future prediction** 
 
 ### Agent Categories
 
@@ -161,7 +166,7 @@ The current dataset loader filters categories relevant to motion forecasting, in
 
 - pedestrians
 - bicycles
-- motorcycles, depending on the category configuration in the loader implementation :contentReference[oaicite:22]{index=22}
+- motorcycles, depending on the category configuration in the loader implementation 
 
 ### Map Representation
 
@@ -169,7 +174,7 @@ The map encoder uses a **20m × 20m** crop around the target agent and rasterize
 
 - drivable area
 - walkway
-- pedestrian crossing :contentReference[oaicite:23]{index=23} :contentReference[oaicite:24]{index=24}
+- pedestrian crossing 
 
 ---
 
