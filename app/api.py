@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading inference API on device: {device}")
 
-    model = IntentAwareTrajectoryModel(embed_dim=128, num_modes=3, future_steps=6)
+    model = IntentAwareTrajectoryModel(embed_dim=128, num_modes=6, future_steps=6)
 
     checkpoint_loaded = False
     if os.path.exists(CHECKPOINT_PATH):
@@ -179,7 +179,9 @@ def predict_trajectory(request: InferenceRequest):
             )
         except RuntimeError as re:
             # Shape/runtime issues from deep PyTorch ops should map to client errors
-            raise HTTPException(status_code=422, detail=f"Invalid input shape for model: {re}")
+            raise HTTPException(
+                status_code=422, detail=f"Invalid input shape for model: {re}"
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Model inference failed: {e}")
 

@@ -207,7 +207,7 @@ def main():
         "--embed_dim", type=int, default=128, help="Shared embedding dimension"
     )
     parser.add_argument(
-        "--num_modes", type=int, default=3, help="Number of trajectory modes"
+        "--num_modes", type=int, default=6, help="Number of trajectory modes"
     )
     parser.add_argument("--future_steps", type=int, default=6, help="Future timesteps")
     parser.add_argument("--t_past", type=int, default=4, help="Past timesteps")
