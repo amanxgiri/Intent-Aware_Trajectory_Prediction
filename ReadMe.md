@@ -1,92 +1,95 @@
+# Intent-Aware Trajectory Prediction
+
 ## Project Overview
 
-Autonomous vehicles operating in urban environments must not only detect pedestrians and cyclists but also anticipate where they are likely to move next. Simply reacting to their current position is not enough for safe navigation—systems need to predict future movement in advance.
+Autonomous vehicles in urban environments must do more than detect pedestrians and cyclists — they must also anticipate how those agents are likely to move next. Reacting only to current position is not enough for safe navigation. This project focuses on **intent-aware trajectory prediction**, where the goal is to predict several realistic future paths for vulnerable road users using past motion, surrounding agents, and scene context.
 
-This project focuses on **intent and trajectory prediction**, where the goal is to forecast the future path of pedestrians and cyclists based on their recent motion. Given **2 seconds of past movement data (positions/velocity)**, the model predicts their **future positions over the next 3 seconds**.
+Given **2 seconds of past motion history** represented as position and velocity, the model predicts **3 seconds of future movement**. The system is designed to handle:
 
-The challenge lies in the fact that human movement is not always predictable:
+- **Multiple possible futures** — a pedestrian may stop, continue, or turn
+- **Social interactions** — nearby agents influence motion decisions
+- **Scene awareness** — drivable area, walkways, and crossings constrain valid futures
 
-- **Multiple possible futures**: A person can turn, stop, or continue straight
-- **Social behavior**: People adjust their movement based on others around them
-- **Temporal patterns**: Motion changes over time and must be understood sequentially
+The final model produces **multi-modal trajectory predictions**, helping autonomous systems act more safely and proactively.
 
-To address this, the system is designed to:
+---
 
-- Learn movement patterns from **past trajectory data**
-- Consider **interactions between nearby agents**
-- Generate **multiple possible future paths (multi-modal prediction)**
-- Infer likely behavior (**intent**) from observed motion and rasterized maps
+## Key Features
 
-The final outcome is a model that takes past movement as input and predicts several realistic future trajectories, helping autonomous systems make **safer and more proactive decisions**.
+- Transformer-based **temporal encoder** for past motion history
+- CNN-based **scene encoder** using rasterized local map crops
+- Graph-based **social encoder** for nearby agent interactions
+- **Winner-Takes-All (WTA)** multi-modal training objective
+- **FastAPI inference service**
+- **Dockerized inference deployment**
+- Unit-tested core components:
+  - prediction head
+  - loss
+  - metrics
+  - full model forward path
 
 ---
 
 ## Model Architecture
 
-The system is organized as a modular prediction pipeline:
+The system follows this pipeline:
 
-**Data Pipeline → Feature Encoding → Social Interaction → Prediction & Deployment**. 
+**Data Pipeline → Temporal Encoder → Scene Encoder → Social Encoder → Fusion → Multi-Modal Prediction Head**
 
 ### 1. Data Pipeline
 
-The dataset layer prepares model-ready tensors from nuScenes samples. For each valid target agent, the pipeline extracts:
+For each valid target agent, the dataset prepares:
 
-- past trajectory history in agent-centric coordinates
-- neighboring agents within a spatial radius
-- a local rasterized map crop
-- future target trajectory for supervision
+- `agent`: past trajectory history in agent-centric coordinates
+- `neighbors`: nearby agents within a local interaction radius
+- `map`: rasterized local semantic map crop
+- `target`: future trajectory for supervision
 
-The current dataset contract is:
+Current tensor contracts:
 
-- `agent`: `[T_past, 4]`, where each step is `[x, y, vx, vy]`
-- `neighbors`: `[N, T_past, 4]`, padded to a fixed maximum neighbor count
+- `agent`: `[T_past, 4]` where each step is `[x, y, vx, vy]`
+- `neighbors`: `[N, T_past, 4]`
 - `map`: `[3, H, W]`
-- `target`: `[T_future, 2]`, where each step is `[x, y]`
+- `target`: `[T_future, 2]`
 
 ### 2. Temporal Encoder
 
-The temporal branch processes the agent’s 2s motion history using a Transformer encoder.
+The temporal branch processes the target agent’s motion history using a Transformer encoder.
 
 Input:
 - `agent`: `[B, T_past, 4]`
 
 Output:
-- `agent_embed`: `[B, T_past, D]` 
-
-This branch learns motion dynamics over time and captures sequential movement patterns.
+- `agent_embed`: `[B, T_past, D]`
 
 ### 3. Scene Encoder
 
-The scene branch processes the rasterized local map using a CNN-based encoder built on ResNet-18 and captures scene context and long term intent.
+The scene branch processes a rasterized local semantic map crop using a CNN backbone based on ResNet-18.
 
 Input:
 - `map`: `[B, 3, H, W]`
 
 Output:
-- `scene_embed`: `[B, D]` 
+- `scene_embed`: `[B, D]`
 
-This branch captures environmental context such as drivable area, walkway structure, and nearby map constraints and long term content. The design uses a **20m × 20m local crop**, centered on the target agent, to focus computation on the most relevant spatial region. :contentReference[oaicite:8]{index=8}
+A **20m × 20m** local crop around the target agent is used to focus on relevant map context.
 
 ### 4. Social Encoder
 
-The social interaction branch models neighboring agents and local crowd behavior using an STGCN-inspired graph encoder.
- We have approached to a **two-layer, 10-meter Graph Convolutional Network (GCN)** utilizing **Gaussian soft-adjacency**.
-* **Beyond Isolated Objects:**  Our dual-layer approach captures the "social hops" of urban movement.
-*  **The Ripple Effect:** The first layer models how neighbors interact with one another. The second layer passes that collective interaction—the "ripple effect"—to the target agent.
-* **Collective Negotiation:** While maintaining a total 20-meter awareness, this architecture allows the model to predict complex group behaviors and path negotiations that a single-layer logic would overlook.
+The social branch models interactions with neighboring agents using an STGCN-inspired graph encoder.
 
-Inputs:
-- `neighbors`: `[B, N, 4]`
+Input:
+- `neighbors`: `[B, N, 4]` or `[B, N, T_past, 4]`
 - `agent_embed`: `[B, T_past, D]`
 
 Output:
 - `social_embed`: `[B, D]`
 
-In the current implementation, the dataloader may provide neighbors with a time dimension, and the integration layer adapts them before passing them into the social encoder.
+Note: if neighbors arrive as `[B, N, T_past, 4]`, the integration layer safely adapts them to spatial form using the most recent timestep before passing them into the social encoder.
 
 ### 5. Fusion and Prediction Head
 
-The final prediction module combines temporal, scene, and social context into one fused representation:
+The final fused representation is formed by concatenating:
 
 ```python
 fused = concat(
@@ -96,39 +99,62 @@ fused = concat(
 )
 ```
 
-This produces a fused feature of shape `[B, 3D]`, which is passed to the multi-modal prediction head. 
+This fused tensor is passed to the prediction head.
 
-The prediction head outputs:
+Current standardized model config:
+- `embed_dim = 128`
+- `num_modes = 3`
+- `future_steps = 6`
 
-- `trajectories`: `[B, K, T_future, 2]`
-- `probabilities`: `[B, K]` 
-
-This allows the system to predict multiple possible future paths rather than forcing a single deterministic outcome.
+Output:
+- `trajectories`: `[B, 3, 6, 2]`
+- `mode_logits`: `[B, 3]`
 
 ### 6. Training Objective
 
-The model is trained with a **Winner-Takes-All (WTA)** style objective. The model predicts multiple trajectory modes, and the loss is computed using the mode that best matches the ground-truth future trajectory. This supports multi-modal forecasting and reduces collapse toward a single average path. 
+The model is trained with a **Winner-Takes-All (WTA)** objective:
 
-### 7. Metrics Used
+- compute displacement error for all modes
+- choose the best-matching mode
+- backpropagate regression loss through that best mode
+- train the mode logits using cross-entropy against the best mode index
 
-The current evaluation setup focuses on:
+---
+
+## Metrics Used
+
+The project currently evaluates:
 
 - **ADE** — Average Displacement Error
 - **FDE** — Final Displacement Error
 - **MinADE@K**
 - **MinFDE@K**
 
-### 8. Performance and Results
+---
 
-The model achieves high-fidelity predictions with stable convergence. Best performance was achieved at **Epoch 3** with a **Validation Loss of 0.3256**.
+## Best Current Results
 
-| Metric (metres)   | Score  |
-| :---              | :---   |
-| **MinADE@K**      | 0.2358 |
-| **MinFDE@K**      | 0.4330 |
-| **ADE (Overall)** | 0.2558 |
-| **FDE (Overall)** | 0.4775 |
+Best validated 3-mode checkpoint:
 
+- **Validation Loss:** `0.1292`
+- **ADE:** `0.2525`
+- **FDE:** `0.4769`
+- **MinADE@K:** `0.2449`
+- **MinFDE@K:** `0.4574`
+
+These values are also exported to:
+
+```txt
+checkpoints/eval_summary.json
+```
+
+---
+
+## Training Plot
+
+The training plot for the best tracked run is included here:
+
+![Training Plot](checkpoints/training_plot_lr_5e-05_wd_0p0.png)
 
 ---
 
@@ -136,49 +162,74 @@ The model achieves high-fidelity predictions with stable convergence. Best perfo
 
 ### Primary Dataset
 
-The project uses the **nuScenes** dataset as the primary data source. It is well-suited for this task because it provides:
+This project uses the **nuScenes** dataset.
 
-- temporal tracking of agents
+Why nuScenes:
 - multi-agent urban scenes
-- HD map information
-- realistic motion behavior in complex traffic environments 
+- temporal agent tracks
+- semantic map information
+- realistic urban interaction patterns
 
+### Temporal Setup
 
-### Current Input Representation
+- **Past horizon:** 2 seconds
+- **Future horizon:** 3 seconds
 
-For each training sample, the current dataset implementation returns:
+### Typical Agent Categories
 
-- `agent`: past motion history of the target agent in agent-centric coordinates
-- `neighbors`: nearby agents represented by position and velocity features
-- `map`: a local rasterized semantic map crop
-- `target`: future trajectory of the target agent 
-
-### Temporal Configuration
-
-The project currently uses:
-
-- **2 seconds of past motion**
-- **3 seconds of future prediction** 
-
-### Agent Categories
-
-The current dataset loader filters categories relevant to motion forecasting, including:
-
+The current dataset filtering focuses on motion forecasting categories such as:
 - pedestrians
 - bicycles
-- motorcycles, depending on the category configuration in the loader implementation 
+- motorcycles
 
-### Map Representation
+### Local Map Representation
 
-The map encoder uses a **20m × 20m** crop around the target agent and rasterizes semantic map layers such as:
-
+The map branch uses a **20m × 20m** local crop and rasterizes semantic layers such as:
 - drivable area
 - walkway
-- pedestrian crossing 
+- pedestrian crossing
 
 ---
 
-## Setup & Installation Instructions
+## Project Structure
+
+```txt
+INTENT-AWARE_TRAJECTORY_PREDICTION/
+├── app/
+│   ├── api.py
+│   ├── dataloader.py
+│   ├── dataset.py
+│   ├── full_model.py
+│   ├── loss.py
+│   ├── metrics.py
+│   ├── prediction_head.py
+│   ├── schemas.py
+│   ├── scene_encoder.py
+│   ├── social_encoder.py
+│   ├── temporal_encoder.py
+│   └── utils.py
+├── checkpoints/
+│   ├── best_model.pt
+│   ├── eval_summary.json
+│   └── training_plot_lr_5e-05_wd_0p0.png
+├── scripts/
+│   ├── train.py
+│   ├── train_smoke.py
+│   ├── evaluate.py
+│   └── infer.py
+├── tests/
+│   ├── test_prediction_head.py
+│   ├── test_loss.py
+│   ├── test_metrics.py
+│   └── test_full_model.py
+├── Dockerfile
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Setup & Installation (Local)
 
 ### 1. Create and activate a virtual environment
 
@@ -212,17 +263,17 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 4. Install PyTorch for your device setup
+### 4. Install PyTorch separately
 
-For local GPU training, install a CUDA-enabled PyTorch build in the same environment.
+PyTorch is intentionally **not** included in `requirements.txt` because local GPU training and CPU-only deployment may require different builds.
 
-Example:
+#### For local GPU training (example: CUDA 12.6)
 
 ```bash
 python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 ```
 
-### 5. Verify PyTorch and CUDA
+#### Verify PyTorch
 
 ```bash
 python -c "import torch; print(torch.__version__)"
@@ -230,67 +281,170 @@ python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
 ```
 
-### 6. Place the nuScenes dataset correctly
+---
 
-The dataset loader expects the dataset root to contain the nuScenes version folder. For example:
+## Dataset Setup
+
+Keep the nuScenes dataset **outside the repository**.
+
+Your loader expects a layout like:
 
 ```txt
-MAHE_MOBILITY/
+<dataroot>/
 └── v1.0-mini/
+    ├── category.json
+    ├── sample.json
+    ├── scene.json
+    └── ...
 ```
 
-When running training or data loading code, pass:
-- the dataset root directory as `dataroot`
-- the version separately as `v1.0-mini`
+### Important note for this project’s current local setup
+
+If your files actually live under:
+
+```txt
+C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini\v1.0-mini\...
+```
+
+then your `--dataroot` should be:
+
+```txt
+C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini
+```
+
+because the code resolves data as:
+
+```txt
+<dataroot>/<version>/...
+```
 
 ---
 
-## How to Run the Code
+## Running the Project Locally
 
 ### 1. Train the model
 
-A smoke-training script can be used to run a short end-to-end training cycle on the full architecture.
-
-Example:
+Run full training:
 
 ```bash
-python scripts/train_smoke.py --dataroot "C:\Users\giria\Documents\MAHE_MOBILITY" --version v1.0-mini
+python scripts/train.py --dataroot "C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini" --version v1.0-mini
 ```
 
-This runs the full training path:
+This will:
+- train the model
+- evaluate on validation data during training
+- save the best checkpoint to `checkpoints/best_model.pt`
+- save the training plot to `checkpoints/training_plot_lr_5e-05_wd_0p0.png`
 
-- dataset loading
-- dataloader batching
-- temporal encoder
-- scene encoder
-- social encoder
-- prediction head
-- WTA loss
-- validation metrics
-- checkpoint saving
+### 2. Smoke test training
 
-The best checkpoint is saved to:
-
-```txt
-checkpoints/smoke_best_model.pt
+```bash
+python scripts/train_smoke.py --dataroot "C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini" --version v1.0-mini
 ```
 
-### 2. Start the API server
+### 3. Evaluate the checkpoint
 
-Run the FastAPI server from the project root:
+```bash
+python scripts/evaluate.py --dataroot "C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini" --version v1.0-mini --checkpoint checkpoints/best_model.pt --output_json checkpoints/eval_summary.json
+```
+
+### 4. Run local inference from one validation sample
+
+```bash
+python scripts/infer.py --dataroot "C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini" --version v1.0-mini --checkpoint checkpoints/best_model.pt
+```
+
+Optional JSON output:
+
+```bash
+python scripts/infer.py --dataroot "C:\Users\<user>\Documents\MAHE_MOBILITY\v1.0-mini" --version v1.0-mini --checkpoint checkpoints/best_model.pt --output_json checkpoints/sample_inference.json
+```
+
+### 5. Start the FastAPI server locally
 
 ```bash
 uvicorn app.api:app --reload
 ```
 
-Once the server starts, open:
+Then open:
+
+- API root: `http://127.0.0.1:8000/`
+- Swagger docs: `http://127.0.0.1:8000/docs`
+
+---
+
+## Docker Usage
+
+The Docker image is intended for **inference/API serving only**.
+
+### What Docker includes
+
+- application code
+- trained checkpoint
+- evaluation summary JSON
+- training plot image
+
+### What Docker does not include
+
+- nuScenes dataset
+- training workflow
+- evaluation workflow
+
+### Build the image
+
+```bash
+docker build -t intent-trajectory-api .
+```
+
+### Run the container
+
+If port `8000` is free:
+
+```bash
+docker run -p 8000:8000 intent-trajectory-api
+```
+
+If port `8000` is already in use, run on a different host port, for example `8001`:
+
+```bash
+docker run -p 8001:8000 intent-trajectory-api
+```
+
+### Open the API from your local machine
+
+If you ran with `-p 8000:8000`, open:
 
 - `http://127.0.0.1:8000/`
 - `http://127.0.0.1:8000/docs`
 
-### 3. How to use the API
+If you ran with `-p 8001:8000`, open:
 
-The `/predict` endpoint accepts JSON input with the following shapes:
+- `http://127.0.0.1:8001/`
+- `http://127.0.0.1:8001/docs`
+
+### Important note about `0.0.0.0`
+
+Inside Docker, Uvicorn runs on:
+
+```txt
+0.0.0.0:8000
+```
+
+This is correct. It means the server listens on all container interfaces so your host machine can reach it through the published port.
+
+From your browser, you should still open:
+
+```txt
+http://127.0.0.1:<host_port>
+```
+
+not `0.0.0.0`.
+
+---
+
+## API Input Format
+
+`POST /predict` expects:
 
 - `agent`: `[B, T_past, 4]`
 - `neighbors`: `[B, N, 4]` or `[B, N, T_past, 4]`
@@ -302,58 +456,19 @@ For a single sample, a typical structure is:
 - `neighbors`: `[1, N, 4, 4]` or `[1, N, 4]`
 - `map_img`: `[1, 3, 224, 224]`
 
-The agent feature layout is:
-
+Feature layout:
 - `[x, y, vx, vy]`
 
-The neighbors follow the same feature layout.
-
-The map input is the rasterized semantic map crop used by the scene encoder.
-
-### 4. Recommended way to test the API
-
-The most reliable way to test the API is to send a real sample from the dataloader rather than manually typing large tensors into Swagger.
-
-You can also use the interactive docs at:
-
-```txt
-http://127.0.0.1:8000/docs
-```
-
-### 5. API output format
+### API Output
 
 The API returns:
 
-- `trajectories`: `[B, K, T_future, 2]`
-- `mode_probabilities`: `[B, K]`
-
-where:
-- `K` is the number of predicted future modes
-- `T_future` is the number of future timesteps
+- `trajectories`: `[B, 3, 6, 2]`
+- `mode_probabilities`: `[B, 3]`
 
 ---
 
-## Example Outputs / Results
-
-### Example Training Results
-
-A successful smoke-training run on CUDA showed stable end-to-end training and checkpoint saving. Among the compared settings, the best-performing configuration was:
-
-- **Learning Rate:** `5e-5`
-- **Weight Decay:** `0.0`
-- **Best Validation Loss:** `0.3277`
-- achieved at **epoch 3** :contentReference[oaicite:25]{index=25}
-
-This indicates that:
-
-- the complete architecture trains end-to-end
-- the WTA multimodal setup is functioning correctly
-- the model can generate plausible trajectory candidates
-- the lower learning rate was more stable than the more aggressive configuration that improved quickly at first but did not perform as well overall on validation. :contentReference[oaicite:26]{index=26}
-
-### Example API Prediction Output
-
-A successful API inference call returned a response containing predicted trajectories and mode probabilities. Example structure:
+## Example Inference Output
 
 ```json
 {
@@ -386,31 +501,37 @@ A successful API inference call returned a response containing predicted traject
     ]
   ],
   "mode_probabilities": [
-    [0.3078, 0.4570, 0.2352]
+    [0.0001, 0.9904, 0.0095]
   ]
 }
 ```
 
-This output means:
-
+This means:
 - batch size = `1`
-- multiple future trajectory hypotheses were returned
-- each hypothesis consists of a sequence of predicted future `(x, y)` positions
-- `mode_probabilities` gives the confidence assigned to each predicted mode
+- the model returned `3` possible future trajectories
+- each trajectory contains `6` future `(x, y)` points
+- `mode_probabilities` gives confidence over the 3 predicted modes
 
-### Current Status
+---
 
-At the current stage, the project supports:
+## Running Tests
+
+Run all current unit tests:
+
+```bash
+pytest tests/test_prediction_head.py tests/test_loss.py tests/test_metrics.py tests/test_full_model.py -q
+```
+
+---
+
+## Current Status
+
+The project currently supports:
 
 - end-to-end training on nuScenes
-- multimodal trajectory prediction
-- FastAPI-based inference
-- checkpoint loading and serving through the API
-- CUDA-based local training
-
-The current system is suitable for:
-
-- architecture validation
-- training and checkpoint generation
-- API-based prediction and testing
-- further tuning and extension
+- multi-modal trajectory prediction
+- checkpoint evaluation
+- local inference
+- FastAPI-based prediction serving
+- Docker-based inference deployment
+- tested core modules
